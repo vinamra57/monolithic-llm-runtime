@@ -213,7 +213,7 @@ class LLM:
         use_tqdm: bool = True,
     ) -> List[str]:
         """
-        Generate text for a batch of prompts
+        Generate text for a batch of prompts with continuous batching
 
         Args:
             prompts: list of prompt strings or token ID lists
@@ -227,76 +227,129 @@ class LLM:
         if isinstance(sampling_params, SamplingParams):
             sampling_params = [sampling_params] * len(prompts)
 
-        # Tokenize prompts if needed
+        # Convert to token IDs if needed
         if isinstance(prompts[0], str):
-            input_ids = self.tokenizer(
-                prompts,
-                return_tensors="pt",
-                padding=True,
-                truncation=True,
-                max_length=self.max_model_len
-            ).input_ids.to(self.device)
+            prompt_token_lists = []
+            for p in prompts:
+                tokens = self.tokenizer(p, return_tensors="pt").input_ids[0].tolist()
+                prompt_token_lists.append(tokens)
         else:
-            # Pad token ID lists
-            max_len = max(len(p) for p in prompts)
-            input_ids = torch.zeros((len(prompts), max_len), dtype=torch.long, device=self.device)
-            input_ids.fill_(self.tokenizer.pad_token_id or 0)
-            for i, p in enumerate(prompts):
-                input_ids[i, :len(p)] = torch.tensor(p, dtype=torch.long)
+            prompt_token_lists = prompts
 
-        batch_size, prompt_len = input_ids.shape
-        max_gen_len = max(sp.max_tokens for sp in sampling_params)
+        num_requests = len(prompt_token_lists)
 
-        # Initialize output sequences
-        output_ids = input_ids.clone()
-        finished = torch.zeros(batch_size, dtype=torch.bool, device=self.device)
-        generated_tokens = torch.zeros(batch_size, dtype=torch.long, device=self.device)
+        # Track state for each request
+        request_states = []
+        for i in range(num_requests):
+            request_states.append({
+                'prompt_tokens': prompt_token_lists[i],
+                'output_tokens': [],
+                'past_key_values': None,
+                'finished': False,
+                'prompt_processed': False,
+                'sampling_params': sampling_params[i],
+            })
 
-        # Generation loop - monolithic, optimized
-        past_key_values = None
-        for step in range(max_gen_len):
-            # Prepare input for this step
-            if step == 0:
-                # First step: use full prompt
-                model_input = output_ids
-            else:
-                # Subsequent steps: only use last generated token
-                model_input = output_ids[:, -1:]
+        # Continuous batching loop
+        # We'll use smaller micro-batches to avoid OOM
+        MICRO_BATCH_SIZE = 32  # Process 32 sequences at a time
+
+        max_iterations = max(sp.max_tokens for sp in sampling_params) + 10
+
+        for iteration in range(max_iterations):
+            # Check if all done
+            if all(req['finished'] for req in request_states):
+                break
+
+            # Collect active requests for this iteration
+            batch_requests = []
+            batch_indices = []
+
+            for idx, req in enumerate(request_states):
+                if req['finished']:
+                    continue
+
+                # Add to batch
+                batch_requests.append(req)
+                batch_indices.append(idx)
+
+                if len(batch_requests) >= MICRO_BATCH_SIZE:
+                    break
+
+            if not batch_requests:
+                continue
+
+            # Prepare batch input
+            input_ids_list = []
+            past_kvs_list = []
+
+            for req in batch_requests:
+                if not req['prompt_processed']:
+                    # First forward: entire prompt
+                    input_ids_list.append(req['prompt_tokens'])
+                else:
+                    # Subsequent forwards: just last token
+                    input_ids_list.append([req['output_tokens'][-1]])
+                past_kvs_list.append(req['past_key_values'])
+
+            # Pad batch
+            max_len = max(len(ids) for ids in input_ids_list)
+            batch_input_ids = torch.zeros((len(input_ids_list), max_len),
+                                         dtype=torch.long, device=self.device)
+            batch_input_ids.fill_(self.tokenizer.pad_token_id or 0)
+
+            for i, ids in enumerate(input_ids_list):
+                batch_input_ids[i, :len(ids)] = torch.tensor(ids, dtype=torch.long)
 
             # Forward pass
-            outputs = self.model(
-                input_ids=model_input,
-                past_key_values=past_key_values,
-                use_cache=True,
-            )
+            # For simplicity with past_key_values, process one at a time
+            # This is less efficient but avoids complex KV cache merging
+            for batch_idx, req in enumerate(batch_requests):
+                if not req['prompt_processed']:
+                    # Prefill: process entire prompt
+                    prompt_tensor = torch.tensor([req['prompt_tokens']],
+                                                dtype=torch.long, device=self.device)
+                    outputs = self.model(
+                        input_ids=prompt_tensor,
+                        past_key_values=None,
+                        use_cache=True,
+                    )
+                    req['prompt_processed'] = True
+                else:
+                    # Decode: process one token
+                    token_tensor = torch.tensor([[req['output_tokens'][-1]]],
+                                               dtype=torch.long, device=self.device)
+                    outputs = self.model(
+                        input_ids=token_tensor,
+                        past_key_values=req['past_key_values'],
+                        use_cache=True,
+                    )
 
-            logits = outputs.logits[:, -1, :]  # [batch_size, vocab_size]
-            past_key_values = outputs.past_key_values
+                # Get logits and update past_key_values
+                logits = outputs.logits[0, -1, :]  # [vocab_size]
+                req['past_key_values'] = outputs.past_key_values
 
-            # Sample next tokens
-            next_tokens = self._sample_tokens(logits, sampling_params)
+                # Sample next token
+                next_token = self._sample_tokens(
+                    logits.unsqueeze(0),
+                    [req['sampling_params']]
+                )[0].item()
 
-            # Update sequences
-            output_ids = torch.cat([output_ids, next_tokens.unsqueeze(1)], dim=1)
-            generated_tokens += ~finished
+                req['output_tokens'].append(next_token)
 
-            # Check for EOS or max length
-            for i in range(batch_size):
-                if not sampling_params[i].ignore_eos and next_tokens[i] == self.tokenizer.eos_token_id:
-                    finished[i] = True
-                if generated_tokens[i] >= sampling_params[i].max_tokens:
-                    finished[i] = True
-
-            # Early stopping if all sequences are done
-            if finished.all():
-                break
+                # Check if finished
+                if len(req['output_tokens']) >= req['sampling_params'].max_tokens:
+                    req['finished'] = True
+                elif not req['sampling_params'].ignore_eos and next_token == self.tokenizer.eos_token_id:
+                    req['finished'] = True
 
         # Decode outputs
         generated_texts = []
-        for i in range(batch_size):
-            # Extract only the generated part (exclude prompt)
-            gen_ids = output_ids[i, prompt_len:]
-            text = self.tokenizer.decode(gen_ids, skip_special_tokens=True)
+        for req in request_states:
+            if req['output_tokens']:
+                text = self.tokenizer.decode(req['output_tokens'], skip_special_tokens=True)
+            else:
+                text = ""
             generated_texts.append(text)
 
         return generated_texts
