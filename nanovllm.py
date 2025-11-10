@@ -13,6 +13,9 @@ import time
 from collections import defaultdict
 import os
 
+# Enable memory optimizations
+os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
+
 
 @dataclass
 class SamplingParams:
@@ -242,8 +245,8 @@ class LLM:
         sorted_indices = sorted(range(num_requests), key=lambda i: len(prompt_token_lists[i]))
 
         # Process in batches to avoid OOM
-        # Balanced batch size for memory and performance
-        PREFILL_BATCH_SIZE = 32  # Sweet spot between 16 (slow) and 64 (OOM)
+        # With expandable_segments, try larger batch
+        PREFILL_BATCH_SIZE = 48  # Trying larger with memory optimization
         DECODE_BATCH_SIZE = 64
 
         all_outputs = [[] for _ in range(num_requests)]
