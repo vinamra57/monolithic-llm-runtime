@@ -256,7 +256,7 @@ class LLM:
 
         # Process in batches to avoid OOM
         # With expandable_segments, try larger batch
-        PREFILL_BATCH_SIZE = 48  # Trying larger with memory optimization
+        PREFILL_BATCH_SIZE = 64  # Increased from 48
         DECODE_BATCH_SIZE = 64
 
         all_outputs = [[] for _ in range(num_requests)]
@@ -334,6 +334,10 @@ class LLM:
             # Store outputs
             for i, idx in enumerate(batch_indices):
                 all_outputs[idx] = batch_output_ids[i].cpu().tolist()
+
+            # Clear GPU cache to reduce fragmentation
+            if self.device == "cuda":
+                torch.cuda.empty_cache()
 
         # Decode all outputs
         generated_texts = []
