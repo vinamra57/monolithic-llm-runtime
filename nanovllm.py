@@ -127,7 +127,8 @@ class LLM:
         if not enforce_eager and device == "cuda":
             try:
                 print("  Compiling model with torch.compile()...")
-                self.model = torch.compile(self.model, mode="reduce-overhead")
+                # Use "default" mode to avoid CUDA graph issues with KV cache
+                self.model = torch.compile(self.model, mode="default")
                 print("  Model compiled successfully!")
             except Exception as e:
                 print(f"  torch.compile() failed: {e}, using uncompiled model")
