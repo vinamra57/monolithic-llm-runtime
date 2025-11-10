@@ -107,12 +107,13 @@ class LLM:
         else:
             self.dtype = getattr(torch, dtype)
 
-        # Load model
+        # Load model with INT8 quantization for faster inference
         self.model = AutoModelForCausalLM.from_pretrained(
             model_path,
             torch_dtype=self.dtype,
             device_map=device,
             trust_remote_code=True,
+            load_in_8bit=True if device == "cuda" else False,
         )
 
         # Load tokenizer
@@ -255,8 +256,8 @@ class LLM:
         sorted_indices = sorted(range(num_requests), key=lambda i: len(prompt_token_lists[i]))
 
         # Process in batches to avoid OOM
-        # With expandable_segments, try larger batch
-        PREFILL_BATCH_SIZE = 64  # Increased from 48
+        # Batch size 48 is optimal for 22GB GPU (64 causes OOM)
+        PREFILL_BATCH_SIZE = 48
         DECODE_BATCH_SIZE = 64
 
         all_outputs = [[] for _ in range(num_requests)]
