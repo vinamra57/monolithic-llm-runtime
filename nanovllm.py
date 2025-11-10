@@ -123,6 +123,15 @@ class LLM:
         # Set model to eval mode
         self.model.eval()
 
+        # Compile model for faster execution (if not in eager mode)
+        if not enforce_eager and device == "cuda":
+            try:
+                print("  Compiling model with torch.compile()...")
+                self.model = torch.compile(self.model, mode="reduce-overhead")
+                print("  Model compiled successfully!")
+            except Exception as e:
+                print(f"  torch.compile() failed: {e}, using uncompiled model")
+
         # Extract model properties
         self.num_layers = self.config.num_hidden_layers
         self.num_heads = self.config.num_attention_heads
