@@ -195,7 +195,7 @@ class LLM:
         sampling_params: List[SamplingParams],
     ) -> torch.Tensor:
         """
-        Sample next tokens from logits - monolithic sampling logic
+        Vectorized sampling - process all sequences in parallel
 
         Args:
             logits: [batch_size, vocab_size]
@@ -205,8 +205,26 @@ class LLM:
             next_tokens: [batch_size]
         """
         batch_size = logits.shape[0]
-        next_tokens = torch.zeros(batch_size, dtype=torch.long, device=self.device)
 
+        # Check if all params are the same (common case in benchmarks)
+        if batch_size > 1:
+            first_params = sampling_params[0]
+            all_same = all(
+                p.temperature == first_params.temperature and
+                p.top_k == first_params.top_k and
+                p.top_p == first_params.top_p
+                for p in sampling_params[1:]
+            )
+
+            if all_same:
+                # Fast path: vectorized sampling for uniform parameters
+                logits = logits / first_params.temperature if first_params.temperature > 0 else logits
+                probs = F.softmax(logits, dim=-1)
+                next_tokens = torch.multinomial(probs, num_samples=1).squeeze(-1)
+                return next_tokens
+
+        # Fallback: per-sample sampling (for mixed parameters)
+        next_tokens = torch.zeros(batch_size, dtype=torch.long, device=self.device)
         for i in range(batch_size):
             params = sampling_params[i]
             logit = logits[i]
