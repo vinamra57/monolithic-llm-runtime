@@ -294,13 +294,18 @@ class LLM:
             next_tokens = self._sample_tokens(logits, batch_params)
 
             # Initialize generation state
-            batch_output_ids = next_tokens.unsqueeze(1)  # [batch_size, 1]
+            max_new_tokens = max(p.max_tokens for p in batch_params)
+            # Pre-allocate output buffer to avoid torch.cat overhead
+            batch_output_ids = torch.zeros(
+                (len(batch_prompts), max_new_tokens),
+                dtype=torch.long, device=self.device
+            )
+            batch_output_ids[:, 0] = next_tokens
+
             finished = torch.zeros(len(batch_prompts), dtype=torch.bool, device=self.device)
             generated_counts = torch.ones(len(batch_prompts), dtype=torch.long, device=self.device)
 
             # Decode phase - generate tokens one by one
-            max_new_tokens = max(p.max_tokens for p in batch_params)
-
             for step in range(1, max_new_tokens):
                 if finished.all():
                     break
@@ -318,8 +323,8 @@ class LLM:
                 # Sample next tokens
                 next_tokens = self._sample_tokens(logits, batch_params)
 
-                # Update outputs
-                batch_output_ids = torch.cat([batch_output_ids, next_tokens.unsqueeze(1)], dim=1)
+                # Update outputs (in-place, no allocation)
+                batch_output_ids[:, step] = next_tokens
                 generated_counts += ~finished
 
                 # Check for completion
@@ -332,13 +337,10 @@ class LLM:
                     elif not batch_params[i].ignore_eos and next_tokens[i] == self.tokenizer.eos_token_id:
                         finished[i] = True
 
-            # Store outputs
+            # Store outputs (trim to actual generated length)
             for i, idx in enumerate(batch_indices):
-                all_outputs[idx] = batch_output_ids[i].cpu().tolist()
-
-            # Clear GPU cache to reduce fragmentation
-            if self.device == "cuda":
-                torch.cuda.empty_cache()
+                actual_len = generated_counts[i].item()
+                all_outputs[idx] = batch_output_ids[i, :actual_len].cpu().tolist()
 
         # Decode all outputs
         generated_texts = []
