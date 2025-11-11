@@ -145,20 +145,19 @@ class LLM:
         if not enforce_eager and device == "cuda":
             try:
                 print("  Compiling model with torch.compile()...")
-                # Enable CUDA graphs with KV cache mutation support
+                # Disable CUDA graphs - incompatible with KV cache reuse pattern
                 import torch._inductor.config as config
-                config.triton.cudagraphs = True
-                config.triton.cudagraph_support_input_mutation = True
+                config.triton.cudagraphs = False
 
-                # Use reduce-overhead with CUDA graphs enabled
+                # Use default mode without CUDA graphs - more stable
                 self.model = torch.compile(
                     self.model,
-                    mode="reduce-overhead",
+                    mode="default",
                     fullgraph=False,
                     dynamic=True,
                 )
                 self.compiled = True
-                print("  ✓ Model compiled with torch.compile() + CUDA graphs + KV cache support")
+                print("  ✓ Model compiled with torch.compile() (CUDA graphs disabled)")
             except Exception as e:
                 print(f"  torch.compile() failed: {e}, using uncompiled model")
 
@@ -327,10 +326,6 @@ class LLM:
                 input_ids[i, :len(prompt)] = torch.tensor(prompt, dtype=torch.long)
 
             # Prefill phase - process all prompts
-            # Mark step begin for CUDA graphs if compiled
-            if self.compiled:
-                torch.compiler.cudagraph_mark_step_begin()
-
             outputs = self.model(
                 input_ids=input_ids,
                 past_key_values=None,
@@ -359,10 +354,6 @@ class LLM:
             for step in range(1, max_new_tokens):
                 if finished.all():
                     break
-
-                # Mark step begin for CUDA graphs if compiled
-                if self.compiled:
-                    torch.compiler.cudagraph_mark_step_begin()
 
                 # Forward pass with last generated tokens
                 outputs = self.model(
