@@ -107,14 +107,26 @@ class LLM:
         else:
             self.dtype = getattr(torch, dtype)
 
-        # Load model (SDPA attention is used by default, which automatically
-        # uses Flash Attention if available)
-        self.model = AutoModelForCausalLM.from_pretrained(
-            model_path,
-            torch_dtype=self.dtype,
-            device_map=device,
-            trust_remote_code=True,
-        )
+        # Try to load model with Flash Attention 2, fall back to SDPA
+        flash_attn_loaded = False
+        try:
+            self.model = AutoModelForCausalLM.from_pretrained(
+                model_path,
+                torch_dtype=self.dtype,
+                device_map=device,
+                trust_remote_code=True,
+                attn_implementation="flash_attention_2",
+            )
+            flash_attn_loaded = True
+            print("  ✓ Using Flash Attention 2")
+        except Exception as e:
+            print(f"  Flash Attention 2 unavailable, using SDPA")
+            self.model = AutoModelForCausalLM.from_pretrained(
+                model_path,
+                torch_dtype=self.dtype,
+                device_map=device,
+                trust_remote_code=True,
+            )
 
         # Load tokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
