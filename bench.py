@@ -12,7 +12,7 @@ def main():
     max_ouput_len = 1024
 
     path = os.path.expanduser("~/huggingface/Qwen3-0.6B/")
-    llm = LLM(path, enforce_eager=True, max_model_len=4096)  # torch.compile has CUDA graph issues
+    llm = LLM(path, enforce_eager=False, max_model_len=4096)  # Enable torch.compile with KV cache support
 
     prompt_token_ids = [[randint(0, 10000) for _ in range(randint(100, max_input_len))] for _ in range(num_seqs)]
     sampling_params = [SamplingParams(temperature=0.6, ignore_eos=True, max_tokens=randint(100, max_ouput_len)) for _ in range(num_seqs)]

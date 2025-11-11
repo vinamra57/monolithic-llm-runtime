@@ -141,21 +141,24 @@ class LLM:
         self.model.eval()
 
         # Compile model for faster execution (if not in eager mode)
+        self.compiled = False
         if not enforce_eager and device == "cuda":
             try:
                 print("  Compiling model with torch.compile()...")
-                # Disable CUDA graphs for KV cache compatibility
+                # Enable CUDA graphs with KV cache mutation support
                 import torch._inductor.config as config
-                config.triton.cudagraphs = False
+                config.triton.cudagraphs = True
+                config.triton.cudagraph_support_input_mutation = True
 
-                # Use reduce-overhead for best speed without CUDA graphs
+                # Use reduce-overhead with CUDA graphs enabled
                 self.model = torch.compile(
                     self.model,
                     mode="reduce-overhead",
                     fullgraph=False,
                     dynamic=True,
                 )
-                print("  ✓ Model compiled with torch.compile()")
+                self.compiled = True
+                print("  ✓ Model compiled with torch.compile() + CUDA graphs + KV cache support")
             except Exception as e:
                 print(f"  torch.compile() failed: {e}, using uncompiled model")
 
@@ -324,6 +327,10 @@ class LLM:
                 input_ids[i, :len(prompt)] = torch.tensor(prompt, dtype=torch.long)
 
             # Prefill phase - process all prompts
+            # Mark step begin for CUDA graphs if compiled
+            if self.compiled:
+                torch.compiler.cudagraph_mark_step_begin()
+
             outputs = self.model(
                 input_ids=input_ids,
                 past_key_values=None,
@@ -352,6 +359,10 @@ class LLM:
             for step in range(1, max_new_tokens):
                 if finished.all():
                     break
+
+                # Mark step begin for CUDA graphs if compiled
+                if self.compiled:
+                    torch.compiler.cudagraph_mark_step_begin()
 
                 # Forward pass with last generated tokens
                 outputs = self.model(
