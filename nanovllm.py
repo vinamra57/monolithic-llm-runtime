@@ -299,9 +299,9 @@ class LLM:
         sorted_indices = sorted(range(num_requests), key=lambda i: len(prompt_token_lists[i]))
 
         # Process in batches to avoid OOM
-        # Batch 68: 1150 tok/s - testing larger batch
-        PREFILL_BATCH_SIZE = 96
-        DECODE_BATCH_SIZE = 96
+        # Batch 68: 1150 tok/s, Batch 96: OOM - testing batch 80
+        PREFILL_BATCH_SIZE = 80
+        DECODE_BATCH_SIZE = 80
 
         all_outputs = [[] for _ in range(num_requests)]
 
