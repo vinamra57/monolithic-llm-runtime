@@ -256,8 +256,8 @@ class LLM:
         sorted_indices = sorted(range(num_requests), key=lambda i: len(prompt_token_lists[i]))
 
         # Process in batches to avoid OOM
-        # Batch size 48 is optimal for 22GB GPU (64 causes OOM)
-        PREFILL_BATCH_SIZE = 48
+        # Try batch size 56 (between 48 and 64)
+        PREFILL_BATCH_SIZE = 56
         DECODE_BATCH_SIZE = 64
 
         all_outputs = [[] for _ in range(num_requests)]
