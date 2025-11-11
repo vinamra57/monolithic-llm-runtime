@@ -124,7 +124,7 @@ class LLM:
             flash_attn_loaded = True
             print("  ✓ Using Flash Attention 2")
         except Exception as e:
-            print(f"  Flash Attention 2 unavailable, using SDPA")
+            print(f"  Flash Attention 2 unavailable ({str(e)[:100]}), using SDPA")
             self.model = AutoModelForCausalLM.from_pretrained(
                 model_path,
                 torch_dtype=self.dtype,
