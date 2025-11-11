@@ -256,8 +256,8 @@ class LLM:
         sorted_indices = sorted(range(num_requests), key=lambda i: len(prompt_token_lists[i]))
 
         # Process in batches to avoid OOM
-        # Try batch size 56 (between 48 and 64)
-        PREFILL_BATCH_SIZE = 56
+        # Trying batch size 60 to push higher
+        PREFILL_BATCH_SIZE = 60
         DECODE_BATCH_SIZE = 64
 
         all_outputs = [[] for _ in range(num_requests)]
