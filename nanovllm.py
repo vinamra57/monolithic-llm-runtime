@@ -107,13 +107,13 @@ class LLM:
         else:
             self.dtype = getattr(torch, dtype)
 
-        # Load model with INT8 quantization for faster inference
+        # Load model
         self.model = AutoModelForCausalLM.from_pretrained(
             model_path,
             torch_dtype=self.dtype,
             device_map=device,
             trust_remote_code=True,
-            load_in_8bit=True if device == "cuda" else False,
+            attn_implementation="flash_attention_2",  # Use Flash Attention 2
         )
 
         # Load tokenizer
