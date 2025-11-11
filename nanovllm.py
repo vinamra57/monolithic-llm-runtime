@@ -140,12 +140,16 @@ class LLM:
         if not enforce_eager and device == "cuda":
             try:
                 print("  Compiling model with torch.compile()...")
-                # Use max-autotune for best performance, disable cudagraphs for KV cache
+                # Disable CUDA graphs for KV cache compatibility
+                import torch._inductor.config as config
+                config.triton.cudagraphs = False
+
+                # Use reduce-overhead for best speed without CUDA graphs
                 self.model = torch.compile(
                     self.model,
-                    mode="max-autotune",
+                    mode="reduce-overhead",
                     fullgraph=False,
-                    dynamic=True
+                    dynamic=True,
                 )
                 print("  ✓ Model compiled with torch.compile()")
             except Exception as e:
