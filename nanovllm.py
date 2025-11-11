@@ -4,6 +4,10 @@ All components integrated into a single module for maximum performance
 Target: 2000+ tok/s throughput
 """
 
+import os
+# Disable CUDA graphs for torch.compile (incompatible with KV cache)
+os.environ['TORCH_COMPILE_DISABLE_CUDAGRAPHS'] = '1'
+
 import torch
 import torch.nn.functional as F
 from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig
